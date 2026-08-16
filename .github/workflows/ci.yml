@@ -5,12 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+# Actions are pinned to commit SHAs, not tags. A tag is mutable, so pinning to one
+# means trusting whoever can move it. The trailing comment records the version.
+permissions:
+  contents: read
+
 jobs:
   backend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
       - run: uv sync --frozen
@@ -21,8 +26,8 @@ jobs:
   frontend:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: "22"
           cache: npm
@@ -38,7 +43,8 @@ jobs:
       - name: Committed bundle matches source
         run: |
           if ! git diff --quiet -- private_source_manager/app/psm/static; then
-            echo "The committed frontend bundle is stale. Run 'npm run build' in frontend/ and commit the result."
+            echo "The committed frontend bundle is stale."
+            echo "Run 'npm run build' in frontend/ and commit the result."
             git diff --stat -- private_source_manager/app/psm/static
             exit 1
           fi
@@ -46,8 +52,9 @@ jobs:
   addon:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Validate the add-on
-        uses: home-assistant/actions/hassio-addon-lint@master
+        # home-assistant/actions publishes no releases, so this is the master head.
+        uses: home-assistant/actions/hassio-addon-lint@a7c616ce81ccda50150bf1595786c71b1883fabb
         with:
           path: ./private_source_manager
