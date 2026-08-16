@@ -28,7 +28,10 @@ profile private_source_manager flags=(attach_disconnected,mediate_deleted) {
   /opt/psm/psm/bin/** rix,
 
   # Read broadly, write only where the add-on legitimately needs to.
-  /** r,
+  # m is required as well as r: loading a shared library is an executable mmap, and
+  # without it the dynamic linker cannot map libpython, libcrypto, or the compiled
+  # extension modules under site-packages.
+  /** mr,
   /data/** rw,
   /homeassistant/** rw,
   /addons/** rw,

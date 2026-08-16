@@ -89,9 +89,15 @@ sudo apparmor_parser --skip-kernel-load --skip-cache \
 uv run python tools/check_apparmor.py      # coverage
 ```
 
-The coverage check compares the profile's execute rules against
-`tools/apparmor_exec_targets.json`, which records what each entry point resolves to. Refresh
-it whenever the base image changes:
+Two permissions matter and both have shipped broken: `x` on the resolved path of every entry
+point, and `m` on every shared object, because loading a library is an executable mmap and
+`r` alone is not enough.
+
+The check compares the profile against `tools/apparmor_targets.json`, which records what
+each entry point resolves to plus the loader, all `ldd` dependencies and the compiled Python
+extension modules. Every path is also re-checked with `x86_64` swapped for `aarch64`, so a
+rule hard coded to one architecture fails here rather than only on the device. Refresh
+whenever the base image or dependencies change:
 
 ```bash
 uv run python tools/check_apparmor.py --from-image psm-test:local

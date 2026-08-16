@@ -1,15 +1,18 @@
-"""Check the AppArmor profile covers everything the add-on actually executes.
+"""Check the AppArmor profile covers what the add-on actually needs.
 
-The kernel matches on the resolved path, so a rule for a symlink grants nothing.
-That is exactly how the first version of this profile shipped broken: /usr/bin/bashio
-is a symlink to /usr/lib/bashio/bashio, which the profile only allowed to be read.
+Two permissions matter here and both shipped broken once:
+
+    x   AppArmor matches the resolved path, so a rule naming a symlink grants
+        nothing. /usr/bin/bashio resolves to /usr/lib/bashio/bashio.
+    m   Loading a shared library is an executable mmap. Read alone is not enough,
+        so the dynamic linker could not map libpython.
 
 Two modes:
 
-    check_apparmor.py                     check the profile against the recorded targets
+    check_apparmor.py                     check the profile against recorded targets
     check_apparmor.py --from-image TAG    re-derive the targets from a built image
 
-Refresh with --from-image whenever the base image changes.
+Refresh with --from-image whenever the base image or dependencies change.
 """
 
 from __future__ import annotations
@@ -23,10 +26,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PROFILE = ROOT / "private_source_manager" / "apparmor.txt"
-TARGETS = Path(__file__).resolve().parent / "apparmor_exec_targets.json"
+TARGETS = Path(__file__).resolve().parent / "apparmor_targets.json"
 
-# Entry points the add-on runs, as invoked. The resolved target of each is what the
-# kernel actually checks, and what gets recorded in apparmor_exec_targets.json.
+# Entry points the add-on runs, as invoked. What each resolves to is what the
+# kernel checks, and that resolved path is what gets recorded.
 ENTRY_POINTS = (
     "/init",
     "/command/with-contenv",
@@ -45,21 +48,21 @@ ENTRY_POINTS = (
 
 _RULE = re.compile(r"^(/\S*)\s+([a-zA-Z]+)\s*,")
 
+# Targets are derived from an amd64 image, but the add-on also ships aarch64.
+# Checking the substituted path catches a rule that hard codes one architecture.
+_ARCH_SWAP = ("x86_64", "aarch64")
 
-def parse_exec_rules(profile: str) -> list[str]:
-    """Return the path globs the profile grants some form of execute on.
 
-    Any mode containing x grants execute, covering ix, rix, Px, Cx and ux alike.
-    """
-    globs: list[str] = []
+def parse_rules(profile: str) -> list[tuple[str, str]]:
+    rules: list[tuple[str, str]] = []
     for raw in profile.splitlines():
         line = raw.strip()
         if not line or line.startswith(("#", "deny")):
             continue
         match = _RULE.match(line)
-        if match and "x" in match.group(2):
-            globs.append(match.group(1))
-    return globs
+        if match:
+            rules.append((match.group(1), match.group(2)))
+    return rules
 
 
 def glob_to_regex(glob: str) -> re.Pattern[str]:
@@ -67,53 +70,77 @@ def glob_to_regex(glob: str) -> re.Pattern[str]:
     out = ["^"]
     index = 0
     while index < len(glob):
-        char = glob[index]
         if glob.startswith("**", index):
             out.append(".*")
             index += 2
-        elif char == "*":
+        elif glob[index] == "*":
             out.append("[^/]*")
             index += 1
-        elif char == "{":
+        elif glob[index] == "{":
             close = glob.index("}", index)
             options = glob[index + 1 : close].split(",")
-            out.append(
-                "(?:" + "|".join(re.escape(o) for o in options).replace(r"\*", "[^/]*") + ")"
-            )
+            body = "|".join(re.escape(o) for o in options).replace(r"\*", "[^/]*")
+            out.append(f"(?:{body})")
             index = close + 1
         else:
-            out.append(re.escape(char))
+            out.append(re.escape(glob[index]))
             index += 1
     out.append("$")
     return re.compile("".join(out))
 
 
-def covered(path: str, globs: list[str]) -> str | None:
-    for glob in globs:
-        if glob_to_regex(glob).match(path):
-            return glob
-    return None
+def grants(path: str, rules: list[tuple[str, str]], mode: str) -> bool:
+    return any(mode in modes and glob_to_regex(glob).match(path) for glob, modes in rules)
 
 
-def derive_from_image(tag: str) -> dict[str, str]:
-    script = "; ".join(
-        f'printf "%s\\t%s\\n" "{p}" "$(readlink -f {p} 2>/dev/null)"' for p in ENTRY_POINTS
-    )
+def _variants(path: str) -> list[str]:
+    if _ARCH_SWAP[0] in path:
+        return [path, path.replace(*_ARCH_SWAP)]
+    return [path]
+
+
+def _run(tag: str, script: str) -> str:
     result = subprocess.run(
         ["docker", "run", "--rm", "--entrypoint", "sh", tag, "-c", script],
         capture_output=True,
         text=True,
         check=True,
     )
-    resolved: dict[str, str] = {}
-    for line in result.stdout.splitlines():
+    return result.stdout
+
+
+def derive_from_image(tag: str) -> dict[str, object]:
+    resolve = "; ".join(
+        f'printf "%s\\t%s\\n" "{p}" "$(readlink -f {p} 2>/dev/null)"' for p in ENTRY_POINTS
+    )
+    execs: dict[str, str] = {}
+    for line in _run(tag, resolve).splitlines():
         entry, _, target = line.partition("\t")
         if entry and target:
-            resolved[entry] = target
-    missing = [p for p in ENTRY_POINTS if p not in resolved]
-    if missing:
-        print(f"warning: not present in the image: {', '.join(missing)}", file=sys.stderr)
-    return resolved
+            execs[entry] = target
+
+    # Every shared object the loader maps: interpreter, ldd dependencies of each
+    # binary, and one representative compiled module per package directory.
+    libraries = _run(
+        tag,
+        r"""
+        ls /lib/ld-musl-*.so.1 2>/dev/null
+        for b in """
+        + " ".join(sorted(set(execs.values())))
+        + r"""; do
+            ldd "$b" 2>/dev/null | sed -n 's/.*=> \(\/[^ ]*\).*/\1/p'
+        done
+        for d in $(find /usr/local/lib/python3.*/lib-dynload \
+                        /usr/local/lib/python3.*/site-packages \
+                        -name '*.so' 2>/dev/null | sed 's|/[^/]*$||' | sort -u); do
+            find "$d" -maxdepth 1 -name '*.so' 2>/dev/null | head -1
+        done
+        """,
+    )
+    unique = sorted(
+        {line.strip() for line in libraries.splitlines() if line.strip().startswith("/")}
+    )
+    return {"exec": execs, "mmap": unique}
 
 
 def main() -> int:
@@ -122,40 +149,53 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.from_image:
-        resolved = derive_from_image(args.from_image)
-        TARGETS.write_text(json.dumps(resolved, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        print(f"recorded {len(resolved)} exec targets in {TARGETS.relative_to(ROOT)}")
+        derived = derive_from_image(args.from_image)
+        TARGETS.write_text(json.dumps(derived, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print(
+            f"recorded {len(derived['exec'])} exec and {len(derived['mmap'])} mmap targets"
+            f" in {TARGETS.relative_to(ROOT)}"
+        )
 
     if not TARGETS.is_file():
         print(f"{TARGETS.relative_to(ROOT)} is missing, run --from-image first", file=sys.stderr)
         return 1
 
-    resolved = json.loads(TARGETS.read_text(encoding="utf-8"))
-    globs = parse_exec_rules(PROFILE.read_text(encoding="utf-8"))
-    if not globs:
-        print("the profile grants no execute rules at all", file=sys.stderr)
+    targets = json.loads(TARGETS.read_text(encoding="utf-8"))
+    rules = parse_rules(PROFILE.read_text(encoding="utf-8"))
+    if not rules:
+        print("the profile has no file rules at all", file=sys.stderr)
         return 1
 
-    gaps: list[tuple[str, str]] = []
-    for entry, target in sorted(resolved.items()):
-        rule = covered(target, globs)
-        if rule is None:
-            gaps.append((entry, target))
-        else:
-            note = "" if entry == target else f"  (symlink from {entry})"
-            print(f"  ok  {target}{note}")
+    gaps: list[str] = []
+    checked = 0
+
+    for entry, target in sorted(targets["exec"].items()):
+        for candidate in _variants(target):
+            checked += 1
+            if not grants(candidate, rules, "x"):
+                via = "" if entry == candidate else f", reached via {entry}"
+                gaps.append(f"execute denied on {candidate}{via}")
+
+    for library in targets["mmap"]:
+        for candidate in _variants(library):
+            checked += 1
+            if not grants(candidate, rules, "m"):
+                gaps.append(f"mmap denied on {candidate}, the loader cannot map it")
 
     if gaps:
-        print(f"\n{len(gaps)} exec target(s) not covered by the profile:", file=sys.stderr)
-        for entry, target in gaps:
-            via = "" if entry == target else f", reached via {entry}"
-            print(f"  - {target}{via}", file=sys.stderr)
+        print(f"{len(gaps)} gap(s) in the profile:", file=sys.stderr)
+        for gap in gaps:
+            print(f"  - {gap}", file=sys.stderr)
         print(
-            "\nAppArmor matches the resolved path, so add a rule for the target.", file=sys.stderr
+            "\nAppArmor matches resolved paths, and shared libraries need m as well as r.",
+            file=sys.stderr,
         )
         return 1
 
-    print(f"\nall {len(resolved)} exec targets are covered by {len(globs)} execute rules")
+    print(
+        f"profile covers all {len(targets['exec'])} exec and {len(targets['mmap'])} mmap targets"
+        f" ({checked} checks including the aarch64 substitution)"
+    )
     return 0
 
 

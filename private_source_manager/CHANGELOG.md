@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.2
+
+- Grant `m` as well as `r` in the AppArmor profile. Loading a shared library is an
+  executable mmap, so read alone left the dynamic linker unable to map `libpython`,
+  and the add-on exited with code 127.
+- `tools/check_apparmor.py` now verifies mmap coverage for the loader, every `ldd`
+  dependency and every compiled Python extension module, alongside the existing execute
+  coverage. It also re-checks each path with `x86_64` swapped for `aarch64`, so a rule
+  that hard codes one architecture fails the build instead of only failing on the device.
+
 ## 0.1.1
 
 - Grant execute on `/usr/lib/bashio/**` in the AppArmor profile. `/usr/bin/bashio` is a
