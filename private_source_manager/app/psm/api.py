@@ -9,7 +9,7 @@ from typing import Any
 from aiohttp import web
 
 from .content import Category, ContentError
-from .context import CREDENTIALS, GIT, HASS, REPOS, SETTINGS, VAULT
+from .context import CREDENTIALS, GIT, HASS, REPOS, SETTINGS, UPDATER, VAULT
 from .credentials import CredentialInUse, CredentialKind, UnknownCredential
 from .gitops import Auth, GitError, HostKeyUnknown
 from .hass import HomeAssistantError
@@ -358,6 +358,10 @@ async def delete_repo(request: web.Request) -> web.Response:
     )
 
 
+async def check_updates(request: web.Request) -> web.Response:
+    return web.json_response((await request.app[UPDATER].run_once()).as_dict())
+
+
 async def restart_core(request: web.Request) -> web.Response:
     await request.app[HASS].restart_core()
     return web.json_response({"restarting": True})
@@ -393,4 +397,5 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/repos/{rid}/install", install_repo)
     app.router.add_post("/api/repos/{rid}/uninstall", uninstall_repo)
 
+    app.router.add_post("/api/updates/check", check_updates)
     app.router.add_post("/api/core/restart", restart_core)

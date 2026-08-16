@@ -13,7 +13,18 @@ from aiohttp import web
 from . import __version__, api
 from .config import Settings
 from .content import Targets
-from .context import CREDENTIALS, DB, GIT, HASS, HOSTS, INSTALLER, REPOS, SETTINGS, VAULT
+from .context import (
+    CREDENTIALS,
+    DB,
+    GIT,
+    HASS,
+    HOSTS,
+    INSTALLER,
+    REPOS,
+    SETTINGS,
+    UPDATER,
+    VAULT,
+)
 from .credentials import CredentialStore
 from .db import Database
 from .gitops import Git
@@ -23,6 +34,7 @@ from .ingress import base_href, peer_guard
 from .installer import Installer
 from .keystore import LocalKeystore
 from .repos import RepositoryStore
+from .updater import Updater
 from .vault import Vault
 
 _LOGGER = logging.getLogger(__name__)
@@ -94,19 +106,26 @@ async def _lifecycle(app: web.Application) -> AsyncIterator[None]:
     app[GIT] = git
     app[HASS] = hass
     app[INSTALLER] = installer
-    app[HOSTS] = hosts
-    app[REPOS] = RepositoryStore(db, credentials, git, installer, hass, targets, hosts)
+    repos = RepositoryStore(db, credentials, git, installer, hass, targets, hosts)
+    updater = Updater(repos, credentials, vault, hass, settings)
 
-    auto_lock: asyncio.Task[None] | None = None
+    app[HOSTS] = hosts
+    app[REPOS] = repos
+    app[UPDATER] = updater
+
+    background: list[asyncio.Task[None]] = []
     if settings.auto_lock_minutes > 0:
-        auto_lock = asyncio.create_task(_auto_lock_loop(app))
+        background.append(asyncio.create_task(_auto_lock_loop(app)))
+    if settings.update_interval_hours > 0:
+        background.append(asyncio.create_task(updater.loop()))
 
     yield
 
-    if auto_lock is not None:
-        auto_lock.cancel()
+    for task in background:
+        task.cancel()
+    for task in background:
         with contextlib.suppress(asyncio.CancelledError):
-            await auto_lock
+            await task
     await hass.close()
     await hosts.close()
     vault.shutdown()

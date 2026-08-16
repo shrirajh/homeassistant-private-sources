@@ -59,6 +59,16 @@ class HomeAssistant:
         except HomeAssistantError as err:
             _LOGGER.warning("Could not raise notification: %s", err)
 
+    async def dismiss(self, notification_id: str) -> None:
+        try:
+            await self._request(
+                "POST",
+                "/core/api/services/persistent_notification/dismiss",
+                {"notification_id": notification_id},
+            )
+        except HomeAssistantError as err:
+            _LOGGER.debug("Could not dismiss notification: %s", err)
+
     async def lovelace_resources(self) -> list[dict[str, Any]]:
         return await self._command({"type": "lovelace/resources"}) or []
 

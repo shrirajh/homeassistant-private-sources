@@ -12,6 +12,7 @@ from .hass import HomeAssistant
 from .hosts import Hosts
 from .installer import Installer
 from .repos import RepositoryStore
+from .updater import Updater
 from .vault import Vault
 
 SETTINGS: web.AppKey[Settings] = web.AppKey("settings", Settings)
@@ -23,3 +24,4 @@ HASS: web.AppKey[HomeAssistant] = web.AppKey("hass", HomeAssistant)
 HOSTS: web.AppKey[Hosts] = web.AppKey("hosts", Hosts)
 INSTALLER: web.AppKey[Installer] = web.AppKey("installer", Installer)
 REPOS: web.AppKey[RepositoryStore] = web.AppKey("repos", RepositoryStore)
+UPDATER: web.AppKey[Updater] = web.AppKey("updater", Updater)
