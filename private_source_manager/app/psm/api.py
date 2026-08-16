@@ -8,8 +8,9 @@ from typing import Any
 
 from aiohttp import web
 
-from .context import CREDENTIALS, SETTINGS, VAULT
+from .context import CREDENTIALS, GIT, SETTINGS, VAULT
 from .credentials import CredentialInUse, CredentialKind, UnknownCredential
+from .gitops import Auth, GitError, HostKeyUnknown
 from .sshkeys import InvalidKeyMaterial
 from .vault import (
     InvalidPassphrase,
@@ -51,6 +52,14 @@ async def error_middleware(request: web.Request, handler: Handler) -> web.Stream
         return web.json_response({"error": err.message, "code": "ApiError"}, status=err.status)
     except InvalidKeyMaterial as err:
         return web.json_response({"error": str(err), "code": "InvalidKeyMaterial"}, status=400)
+    except HostKeyUnknown as err:
+        return web.json_response(
+            {"error": str(err), "code": "HostKeyUnknown", "detail": err.stderr}, status=409
+        )
+    except GitError as err:
+        return web.json_response(
+            {"error": str(err), "code": "GitError", "detail": err.stderr}, status=400
+        )
     except VaultError as err:
         status = next((s for kind, s in _STATUS_BY_ERROR if isinstance(err, kind)), 400)
         headers = {}
@@ -185,6 +194,56 @@ async def set_credential_tier(request: web.Request) -> web.Response:
     return web.json_response(credential.as_dict())
 
 
+def auth_for(request: web.Request, credential_id: str | None) -> Auth | None:
+    """Decrypt a credential for the git layer. Raises if the tier is unavailable."""
+    if not credential_id:
+        return None
+    store = request.app[CREDENTIALS]
+    credential = store.get(credential_id)
+    return Auth(
+        kind=credential.kind,
+        secret=store.secret(credential_id),
+        username=credential.username,
+    )
+
+
+async def test_credential(request: web.Request) -> web.Response:
+    payload = await body(request)
+    url = field(payload, "url")
+    auth = auth_for(request, request.match_info["cid"])
+
+    refs = await request.app[GIT].ls_remote(url, auth)
+    return web.json_response(
+        {
+            "ok": True,
+            "tags": sorted({r.name for r in refs if r.kind == "tag"}),
+            "branches": sorted({r.name for r in refs if r.kind == "branch"}),
+        }
+    )
+
+
+async def scan_host(request: web.Request) -> web.Response:
+    payload = await body(request)
+    host = field(payload, "host")
+    try:
+        port = int(payload.get("port", 22))
+    except (TypeError, ValueError) as err:
+        raise ApiError(400, "port must be a number") from err
+
+    keys = await request.app[GIT].scan_host(host, port)
+    if not keys:
+        raise ApiError(404, f"no host keys returned by {host}")
+    return web.json_response({"host": host, "port": port, "keys": keys})
+
+
+async def trust_host(request: web.Request) -> web.Response:
+    payload = await body(request)
+    lines = payload.get("lines")
+    if not isinstance(lines, list) or not all(isinstance(line, str) for line in lines):
+        raise ApiError(400, "lines must be a list of strings")
+    return web.json_response({"added": request.app[GIT].trust_host(lines)})
+
+
 def register(app: web.Application) -> None:
     app.router.add_get("/api/vault", get_vault)
     app.router.add_post("/api/vault/passphrase", set_passphrase)
@@ -199,3 +258,7 @@ def register(app: web.Application) -> None:
     app.router.add_delete("/api/credentials/{cid}", delete_credential)
     app.router.add_post("/api/credentials/{cid}/rotate", rotate_credential)
     app.router.add_put("/api/credentials/{cid}/tier", set_credential_tier)
+    app.router.add_post("/api/credentials/{cid}/test", test_credential)
+
+    app.router.add_post("/api/hosts/scan", scan_host)
+    app.router.add_post("/api/hosts/trust", trust_host)

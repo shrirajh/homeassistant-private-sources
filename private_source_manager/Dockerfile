@@ -21,6 +21,8 @@ COPY rootfs /
 COPY app /opt/psm
 
 # Git on Windows does not reliably carry the exec bit into the build context.
-RUN chmod a+x /etc/s6-overlay/s6-rc.d/psm/run /etc/s6-overlay/s6-rc.d/psm/finish
+RUN chmod a+x /etc/s6-overlay/s6-rc.d/psm/run \
+              /etc/s6-overlay/s6-rc.d/psm/finish \
+              /opt/psm/psm/bin/askpass.sh
 
 WORKDIR /opt/psm

@@ -12,9 +12,10 @@ from aiohttp import web
 
 from . import __version__, api
 from .config import Settings
-from .context import CREDENTIALS, DB, SETTINGS, VAULT
+from .context import CREDENTIALS, DB, GIT, SETTINGS, VAULT
 from .credentials import CredentialStore
 from .db import Database
+from .gitops import Git
 from .ingress import base_href, peer_guard
 from .keystore import LocalKeystore
 from .vault import Vault
@@ -77,6 +78,7 @@ async def _lifecycle(app: web.Application) -> AsyncIterator[None]:
     app[DB] = db
     app[VAULT] = vault
     app[CREDENTIALS] = CredentialStore(db, vault)
+    app[GIT] = Git(settings.cache_dir, settings.known_hosts_path)
 
     auto_lock: asyncio.Task[None] | None = None
     if settings.auto_lock_minutes > 0:
