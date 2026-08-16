@@ -13,6 +13,7 @@ from .context import CREDENTIALS, GIT, HASS, REPOS, SETTINGS, VAULT
 from .credentials import CredentialInUse, CredentialKind, UnknownCredential
 from .gitops import Auth, GitError, HostKeyUnknown
 from .hass import HomeAssistantError
+from .hosts import HostError
 from .repos import RepositoryError, UnknownRepository
 from .sshkeys import InvalidKeyMaterial
 from .vault import (
@@ -63,6 +64,8 @@ async def error_middleware(request: web.Request, handler: Handler) -> web.Stream
         return web.json_response({"error": str(err), "code": "RepositoryError"}, status=400)
     except HomeAssistantError as err:
         return web.json_response({"error": str(err), "code": "HomeAssistantError"}, status=502)
+    except HostError as err:
+        return web.json_response({"error": str(err), "code": "HostError"}, status=502)
     except HostKeyUnknown as err:
         return web.json_response(
             {"error": str(err), "code": "HostKeyUnknown", "detail": err.stderr}, status=409
@@ -309,6 +312,11 @@ async def repo_refs(request: web.Request) -> web.Response:
     return web.json_response([r.as_dict() for r in refs])
 
 
+async def repo_releases(request: web.Request) -> web.Response:
+    releases = await request.app[REPOS].releases(request.match_info["rid"])
+    return web.json_response([r.as_dict() for r in releases])
+
+
 async def refresh_repo(request: web.Request) -> web.Response:
     return web.json_response(
         (await request.app[REPOS].refresh(request.match_info["rid"])).as_dict()
@@ -380,6 +388,7 @@ def register(app: web.Application) -> None:
     app.router.add_patch("/api/repos/{rid}", patch_repo)
     app.router.add_delete("/api/repos/{rid}", delete_repo)
     app.router.add_get("/api/repos/{rid}/refs", repo_refs)
+    app.router.add_get("/api/repos/{rid}/releases", repo_releases)
     app.router.add_post("/api/repos/{rid}/refresh", refresh_repo)
     app.router.add_post("/api/repos/{rid}/install", install_repo)
     app.router.add_post("/api/repos/{rid}/uninstall", uninstall_repo)

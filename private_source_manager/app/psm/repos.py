@@ -16,6 +16,7 @@ from .credentials import CredentialStore
 from .db import Database
 from .gitops import Auth, Git, GitError, Ref
 from .hass import HomeAssistant, HomeAssistantError
+from .hosts import HostError, Hosts, Release, extract_zip
 from .installer import Installer, InstallResult, RemovalResult
 
 _LOGGER = logging.getLogger(__name__)
@@ -177,6 +178,7 @@ class RepositoryStore:
         installer: Installer,
         hass: HomeAssistant,
         targets: Targets,
+        hosts: Hosts | None = None,
     ) -> None:
         self._db = db
         self._credentials = credentials
@@ -184,6 +186,7 @@ class RepositoryStore:
         self._installer = installer
         self._hass = hass
         self._targets = targets
+        self._hosts = hosts or Hosts()
 
     def list(self) -> list[Repo]:
         return [_to_repo(row) for row in self._db.all(f"{_SELECT} ORDER BY owner, name")]
@@ -261,6 +264,49 @@ class RepositoryStore:
     async def available_refs(self, repo_id: str) -> list[Ref]:
         return await self._git.local_refs(repo_id)
 
+    async def releases(self, repo_id: str) -> list[Release]:
+        """Release metadata where the host offers an API, otherwise an empty list."""
+        repo = self.get(repo_id)
+        if not self._hosts.supports_api(repo.host):
+            return []
+        try:
+            return await self._hosts.releases(
+                repo.host, repo.owner, repo.name, self._auth_for(repo.credential_id)
+            )
+        except HostError as err:
+            _LOGGER.info("Release metadata unavailable for %s: %s", repo.slug, err)
+            return []
+
+    async def _fetch_zip_release(
+        self, repo: Repo, tag: str, manifest: HacsManifest, staging: Path, workdir: Path
+    ) -> None:
+        """Prefer the published archive, falling back to the git tree when unavailable."""
+        auth = self._auth_for(repo.credential_id)
+        try:
+            releases = await self._hosts.releases(repo.host, repo.owner, repo.name, auth)
+        except HostError as err:
+            _LOGGER.info("Could not read releases for %s: %s", repo.slug, err)
+            releases = []
+
+        release = next((r for r in releases if r.tag == tag), None)
+        asset = None
+        if release is not None:
+            if manifest.filename:
+                asset = next((a for a in release.assets if a.name == manifest.filename), None)
+            if asset is None:
+                archives = [a for a in release.assets if a.name.endswith(".zip")]
+                asset = archives[0] if len(archives) == 1 else None
+
+        if asset is None:
+            _LOGGER.info("No release archive for %s at %s, using the git tree", repo.slug, tag)
+            await self._git.export(repo.id, tag, staging)
+            return
+
+        archive = workdir / asset.name
+        await self._hosts.download(repo.host, asset.url, archive, auth)
+        extract_zip(archive, staging)
+        _LOGGER.info("Installed %s from release archive %s", repo.slug, asset.name)
+
     async def install(self, repo_id: str, ref: str | None = None) -> InstallResult:
         repo = self.get(repo_id)
         auth = self._auth_for(repo.credential_id)
@@ -274,7 +320,10 @@ class RepositoryStore:
         category = Category(repo.category)
         with tempfile.TemporaryDirectory(prefix="psm-install-") as tmp:
             staging = Path(tmp) / "tree"
-            await self._git.export(repo_id, target, staging)
+            if manifest.zip_release:
+                await self._fetch_zip_release(repo, target, manifest, staging, Path(tmp))
+            else:
+                await self._git.export(repo_id, target, staging)
             layout = plan(category, staging, repo.name, manifest, self._targets)
             result = self._installer.apply(repo_id, layout)
 
