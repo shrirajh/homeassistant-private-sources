@@ -21,6 +21,29 @@ ADDON = ROOT / "private_source_manager"
 KNOWN_ARCH = {"aarch64", "amd64", "armhf", "armv7", "i386"}
 REQUIRED = ("name", "version", "slug", "description", "arch")
 
+# The Supervisor validates config.yaml with extra=vol.REMOVE_EXTRA, so an unrecognised
+# key is silently dropped rather than reported. An invented key therefore looks like it
+# works while doing nothing at all. Resolved from ATTR_ constants referenced by
+# _SCHEMA_APP_CONFIG in supervisor/apps/validate.py, via their values in const.py.
+# Note ingress_panel is deliberately absent: it belongs to the Supervisor's persisted
+# per-add-on state and is set by the Show in sidebar toggle, not by an add-on.
+CONFIG_KEYS = frozenset(
+    {
+        "advanced", "apparmor", "arch", "args", "audio", "auth_api", "backup",
+        "backup_exclude", "backup_post", "backup_pre", "boot", "breaking_versions",
+        "build_from", "configuration", "description", "devices", "devicetree", "discovery",
+        "docker_api", "environment", "fields", "full_access", "gpio", "hassio_api",
+        "hassio_role", "homeassistant", "homeassistant_api", "host_dbus", "host_ipc",
+        "host_network", "host_pid", "host_uts", "image", "ingress", "ingress_entry",
+        "ingress_port", "ingress_stream", "init", "journald", "kernel_modules", "labels",
+        "legacy", "machine", "map", "name", "network", "options", "panel_admin",
+        "panel_icon", "panel_title", "path", "ports", "ports_description", "privileged",
+        "read_only", "realtime", "schema", "services", "slug", "squash", "stage", "startup",
+        "stdin", "timeout", "tmpfs", "type", "uart", "udev", "ulimits", "url", "usb",
+        "version", "video", "watchdog", "webui",
+    }
+)  # fmt: skip
+
 problems: list[str] = []
 
 
@@ -68,6 +91,9 @@ def check_config(config: dict[str, Any], build: dict[str, Any]) -> None:
 
     if config.get("ingress") and not config.get("ingress_port"):
         fail("config.yaml: ingress is enabled but ingress_port is not set")
+
+    for key in sorted(set(config) - CONFIG_KEYS):
+        fail(f"config.yaml: {key} is not a Supervisor add-on option, it will be ignored")
 
 
 def check_options(config: dict[str, Any]) -> None:

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.1
+
+- Drop `ingress_panel` from `config.yaml`. It is not an add-on option: the Supervisor keeps
+  it in its own per-add-on state and it is set by the **Show in sidebar** toggle on the
+  add-on page. The Supervisor validates `config.yaml` with `extra=vol.REMOVE_EXTRA`, so the
+  key was silently discarded and appeared to work while doing nothing.
+- `tools/check_addon.py` rejects any key that is not in the Supervisor's add-on config
+  schema, so an invented option fails the build instead of being quietly dropped.
+- Document that the sidebar entry has to be enabled once by hand.
+
 ## 0.2.0
 
 - Show the panel in the sidebar. `ingress_panel` was missing, so the panel existed but

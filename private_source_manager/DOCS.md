@@ -10,7 +10,12 @@ credential per repository, kept in an encrypted vault.
 2. Add `https://github.com/shrirajh/homeassistant-private-sources`.
 3. Install **Private Source Manager**. The Supervisor builds the image on the device, which
    takes a few minutes on a Home Assistant Green.
-4. Start the add-on and open **Private Sources** in the sidebar.
+4. Start the add-on, then turn on **Show in sidebar** on its Info page.
+
+That toggle is the only thing that puts the panel in the sidebar. An add-on cannot opt
+itself in: the Supervisor keeps the setting in its own per-add-on state, defaulted off, so
+it survives updates and reinstalls and has to be set once by hand. Until then the panel is
+still reachable through **Open Web UI** on the same page.
 
 ## What it can install
 
