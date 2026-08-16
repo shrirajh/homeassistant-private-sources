@@ -31,14 +31,17 @@ profile private_source_manager flags=(attach_disconnected,mediate_deleted) {
   # m is required as well as r: loading a shared library is an executable mmap, and
   # without it the dynamic linker cannot map libpython, libcrypto, or the compiled
   # extension modules under site-packages.
+  # k is file locking. SQLite takes an fcntl advisory lock on every database and an
+  # exclusive one to enter WAL mode, and git locks its index and config, so every
+  # writable path needs it. l covers the hard links git makes when cloning locally.
   /** mr,
-  /data/** rw,
-  /homeassistant/** rw,
-  /addons/** rw,
-  /tmp/** rw,
-  /run/** rwk,
-  /var/** rw,
-  /dev/** rw,
+  /data/** rwkl,
+  /homeassistant/** rwkl,
+  /addons/** rwkl,
+  /tmp/** rwkl,
+  /run/** rwkl,
+  /var/** rwkl,
+  /dev/** rwk,
   /opt/psm/** r,
 
   # Nothing here should ever rewrite the container's own configuration.

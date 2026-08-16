@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3
+
+- Grant `k` on every writable path in the AppArmor profile. SQLite takes an fcntl advisory
+  lock on any database it opens and an exclusive one to enter WAL mode, so without it the
+  add-on died at startup with a misleading `database is locked`. Also grants `l`, for the
+  hard links git makes when cloning a local repository.
+- `tools/check_apparmor.py` now fails any rule that grants write without `k`, so a writable
+  path that cannot be locked is rejected before it ships.
+
 ## 0.1.2
 
 - Grant `m` as well as `r` in the AppArmor profile. Loading a shared library is an

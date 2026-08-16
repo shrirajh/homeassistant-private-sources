@@ -93,6 +93,20 @@ def grants(path: str, rules: list[tuple[str, str]], mode: str) -> bool:
     return any(mode in modes and glob_to_regex(glob).match(path) for glob, modes in rules)
 
 
+def check_write_implies_lock(rules: list[tuple[str, str]]) -> list[str]:
+    """Every writable path needs k.
+
+    SQLite takes an fcntl advisory lock on any database it opens, and git locks its
+    index and config. Without k the lock is refused and SQLite reports the confusing
+    'database is locked' rather than a permission error.
+    """
+    return [
+        f"{glob} grants write ({modes}) without k, so fcntl locking there is denied"
+        for glob, modes in rules
+        if "w" in modes and "k" not in modes
+    ]
+
+
 def _variants(path: str) -> list[str]:
     if _ARCH_SWAP[0] in path:
         return [path, path.replace(*_ARCH_SWAP)]
@@ -166,8 +180,8 @@ def main() -> int:
         print("the profile has no file rules at all", file=sys.stderr)
         return 1
 
-    gaps: list[str] = []
-    checked = 0
+    gaps: list[str] = check_write_implies_lock(rules)
+    checked = len(rules)
 
     for entry, target in sorted(targets["exec"].items()):
         for candidate in _variants(target):
@@ -187,14 +201,15 @@ def main() -> int:
         for gap in gaps:
             print(f"  - {gap}", file=sys.stderr)
         print(
-            "\nAppArmor matches resolved paths, and shared libraries need m as well as r.",
+            "\nAppArmor matches resolved paths. Shared libraries need m as well as r,"
+            "\nand anything writable needs k for fcntl locking.",
             file=sys.stderr,
         )
         return 1
 
     print(
         f"profile covers all {len(targets['exec'])} exec and {len(targets['mmap'])} mmap targets"
-        f" ({checked} checks including the aarch64 substitution)"
+        f", and every writable rule allows locking ({checked} checks)"
     )
     return 0
 
