@@ -2,25 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from pathlib import Path
-
-import pytest
-from aiohttp.test_utils import TestClient, TestServer
-
-from psm.server import create_app
-
-from conftest import make_settings
+from aiohttp.test_utils import TestClient
 
 PASSPHRASE = "correct horse battery"
 OTHER = "incorrect zebra staple"
-
-
-@pytest.fixture
-async def client(tmp_path: Path) -> AsyncIterator[TestClient]:
-    app = create_app(make_settings(tmp_path))
-    async with TestClient(TestServer(app)) as instance:
-        yield instance
 
 
 async def test_initial_status(client: TestClient) -> None:

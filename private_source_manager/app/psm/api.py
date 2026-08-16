@@ -8,11 +8,14 @@ from typing import Any
 
 from aiohttp import web
 
-from .context import SETTINGS, VAULT
+from .context import CREDENTIALS, SETTINGS, VAULT
+from .credentials import CredentialInUse, CredentialKind, UnknownCredential
+from .sshkeys import InvalidKeyMaterial
 from .vault import (
     InvalidPassphrase,
     PassphraseAlreadySet,
     PassphraseNotSet,
+    Tier,
     TooManyAttempts,
     VaultError,
     VaultLocked,
@@ -28,6 +31,8 @@ _STATUS_BY_ERROR: tuple[tuple[type[VaultError], int], ...] = (
     (TooManyAttempts, 429),
     (PassphraseNotSet, 409),
     (PassphraseAlreadySet, 409),
+    (UnknownCredential, 404),
+    (CredentialInUse, 409),
 )
 
 
@@ -44,6 +49,8 @@ async def error_middleware(request: web.Request, handler: Handler) -> web.Stream
         return await handler(request)
     except ApiError as err:
         return web.json_response({"error": err.message, "code": "ApiError"}, status=err.status)
+    except InvalidKeyMaterial as err:
+        return web.json_response({"error": str(err), "code": "InvalidKeyMaterial"}, status=400)
     except VaultError as err:
         status = next((s for kind, s in _STATUS_BY_ERROR if isinstance(err, kind)), 400)
         headers = {}
@@ -119,6 +126,65 @@ async def lock(request: web.Request) -> web.Response:
     return web.json_response(_status_payload(request))
 
 
+def _tier(value: object) -> Tier:
+    try:
+        return Tier(str(value))
+    except ValueError as err:
+        raise ApiError(400, "tier must be unattended or protected") from err
+
+
+async def list_credentials(request: web.Request) -> web.Response:
+    return web.json_response([c.as_dict() for c in request.app[CREDENTIALS].list()])
+
+
+async def create_credential(request: web.Request) -> web.Response:
+    payload = await body(request)
+    store = request.app[CREDENTIALS]
+    label = field(payload, "label")
+    tier = _tier(payload.get("tier", Tier.UNATTENDED.value))
+    kind = field(payload, "kind")
+
+    if kind == CredentialKind.SSH.value:
+        material = payload.get("private_key")
+        if material is not None and not isinstance(material, str):
+            raise ApiError(400, "private_key must be a string")
+        credential = store.create_ssh(label, tier, material.encode("utf-8") if material else None)
+    elif kind == CredentialKind.TOKEN.value:
+        username = payload.get("username")
+        credential = store.create_token(
+            label,
+            tier,
+            field(payload, "token"),
+            username if isinstance(username, str) and username else None,
+        )
+    else:
+        raise ApiError(400, "kind must be ssh or token")
+
+    return web.json_response(credential.as_dict(), status=201)
+
+
+async def get_credential(request: web.Request) -> web.Response:
+    return web.json_response(request.app[CREDENTIALS].get(request.match_info["cid"]).as_dict())
+
+
+async def delete_credential(request: web.Request) -> web.Response:
+    request.app[CREDENTIALS].delete(request.match_info["cid"])
+    return web.json_response({"deleted": True})
+
+
+async def rotate_credential(request: web.Request) -> web.Response:
+    credential = request.app[CREDENTIALS].rotate_ssh(request.match_info["cid"])
+    return web.json_response(credential.as_dict())
+
+
+async def set_credential_tier(request: web.Request) -> web.Response:
+    payload = await body(request)
+    credential = request.app[CREDENTIALS].set_tier(
+        request.match_info["cid"], _tier(field(payload, "tier"))
+    )
+    return web.json_response(credential.as_dict())
+
+
 def register(app: web.Application) -> None:
     app.router.add_get("/api/vault", get_vault)
     app.router.add_post("/api/vault/passphrase", set_passphrase)
@@ -126,3 +192,10 @@ def register(app: web.Application) -> None:
     app.router.add_delete("/api/vault/passphrase", remove_passphrase)
     app.router.add_post("/api/vault/unlock", unlock)
     app.router.add_post("/api/vault/lock", lock)
+
+    app.router.add_get("/api/credentials", list_credentials)
+    app.router.add_post("/api/credentials", create_credential)
+    app.router.add_get("/api/credentials/{cid}", get_credential)
+    app.router.add_delete("/api/credentials/{cid}", delete_credential)
+    app.router.add_post("/api/credentials/{cid}/rotate", rotate_credential)
+    app.router.add_put("/api/credentials/{cid}/tier", set_credential_tier)
