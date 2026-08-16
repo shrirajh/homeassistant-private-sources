@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from aiohttp import web
 
-from . import __version__
+from . import __version__, api
 from .config import Settings
+from .context import DB, SETTINGS, VAULT
+from .db import Database
 from .ingress import base_href, peer_guard
+from .keystore import LocalKeystore
+from .vault import Vault
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -18,7 +25,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 # Rewritten per request because the ingress prefix changes with the session token.
 BASE_TAG = '<base href="/">'
 
-SETTINGS: web.AppKey[Settings] = web.AppKey("settings", Settings)
+AUTO_LOCK_POLL_SECONDS = 30
 
 
 async def handle_index(request: web.Request) -> web.Response:
@@ -51,13 +58,47 @@ async def handle_info(request: web.Request) -> web.Response:
     )
 
 
+async def _auto_lock_loop(app: web.Application) -> None:
+    vault = app[VAULT]
+    minutes = app[SETTINGS].auto_lock_minutes
+    while True:
+        await asyncio.sleep(AUTO_LOCK_POLL_SECONDS)
+        vault.maybe_auto_lock(minutes)
+
+
+async def _lifecycle(app: web.Application) -> AsyncIterator[None]:
+    settings = app[SETTINGS]
+    settings.ensure_dirs()
+
+    db = Database(settings.db_path)
+    vault = Vault(db, LocalKeystore(settings.keystore_dir))
+    vault.start()
+    app[DB] = db
+    app[VAULT] = vault
+
+    auto_lock: asyncio.Task[None] | None = None
+    if settings.auto_lock_minutes > 0:
+        auto_lock = asyncio.create_task(_auto_lock_loop(app))
+
+    yield
+
+    if auto_lock is not None:
+        auto_lock.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await auto_lock
+    vault.shutdown()
+    db.close()
+
+
 def create_app(settings: Settings) -> web.Application:
-    app = web.Application(middlewares=[peer_guard(settings)])
+    app = web.Application(middlewares=[peer_guard(settings), api.error_middleware])
     app[SETTINGS] = settings
+    app.cleanup_ctx.append(_lifecycle)
 
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/health", handle_health)
     app.router.add_get("/api/info", handle_info)
+    api.register(app)
 
     assets = STATIC_DIR / "assets"
     if assets.is_dir():

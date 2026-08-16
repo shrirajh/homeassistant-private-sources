@@ -8,24 +8,13 @@ import pytest
 from aiohttp.test_utils import TestClient, TestServer, make_mocked_request
 
 from psm import ingress
-from psm.config import Settings
 from psm.server import create_app
 
+from conftest import make_settings
 
-def _settings(tmp_path: Path, *, dev_mode: bool) -> Settings:
-    return Settings(
-        dev_mode=dev_mode,
-        log_level="info",
-        host="127.0.0.1",
-        port=0,
-        data_dir=tmp_path / "data",
-        ha_config_dir=tmp_path / "homeassistant",
-        addons_dir=tmp_path / "addons",
-        update_interval_hours=6,
-        auto_lock_minutes=0,
-        notify_on_update=True,
-        supervisor_token=None,
-    )
+
+def _settings(tmp_path: Path, *, dev_mode: bool):
+    return make_settings(tmp_path, dev_mode=dev_mode)
 
 
 @pytest.mark.parametrize(

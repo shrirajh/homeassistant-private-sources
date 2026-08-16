@@ -31,8 +31,6 @@ def main() -> int:
     )
     log = logging.getLogger("psm")
 
-    settings.ensure_dirs()
-
     log.info(
         "Private Source Manager %s listening on %s:%s", __version__, settings.host, settings.port
     )

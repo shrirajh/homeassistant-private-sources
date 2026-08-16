@@ -29,12 +29,6 @@ OTHER_PASSPHRASE = "incorrect zebra staple"
 _REAL_CALIBRATE = crypto.calibrate
 
 
-@pytest.fixture(autouse=True)
-def cheap_kdf(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Calibration would otherwise burn a second of wall clock per test."""
-    monkeypatch.setattr(crypto, "calibrate", lambda *a, **k: ScryptParams(1 << 10))
-
-
 @pytest.fixture
 def parts(tmp_path: Path) -> tuple[Database, LocalKeystore]:
     keystore_dir = tmp_path / "keystore"
