@@ -8,9 +8,12 @@ from typing import Any
 
 from aiohttp import web
 
-from .context import CREDENTIALS, GIT, SETTINGS, VAULT
+from .content import Category, ContentError
+from .context import CREDENTIALS, GIT, HASS, REPOS, SETTINGS, VAULT
 from .credentials import CredentialInUse, CredentialKind, UnknownCredential
 from .gitops import Auth, GitError, HostKeyUnknown
+from .hass import HomeAssistantError
+from .repos import RepositoryError, UnknownRepository
 from .sshkeys import InvalidKeyMaterial
 from .vault import (
     InvalidPassphrase,
@@ -52,6 +55,14 @@ async def error_middleware(request: web.Request, handler: Handler) -> web.Stream
         return web.json_response({"error": err.message, "code": "ApiError"}, status=err.status)
     except InvalidKeyMaterial as err:
         return web.json_response({"error": str(err), "code": "InvalidKeyMaterial"}, status=400)
+    except UnknownRepository as err:
+        return web.json_response({"error": str(err), "code": "UnknownRepository"}, status=404)
+    except ContentError as err:
+        return web.json_response({"error": str(err), "code": "ContentError"}, status=400)
+    except RepositoryError as err:
+        return web.json_response({"error": str(err), "code": "RepositoryError"}, status=400)
+    except HomeAssistantError as err:
+        return web.json_response({"error": str(err), "code": "HomeAssistantError"}, status=502)
     except HostKeyUnknown as err:
         return web.json_response(
             {"error": str(err), "code": "HostKeyUnknown", "detail": err.stderr}, status=409
@@ -244,6 +255,106 @@ async def trust_host(request: web.Request) -> web.Response:
     return web.json_response({"added": request.app[GIT].trust_host(lines)})
 
 
+def _category(value: object) -> Category | None:
+    if value in (None, ""):
+        return None
+    try:
+        return Category(str(value))
+    except ValueError as err:
+        raise ApiError(400, f"unknown category {value}") from err
+
+
+def _optional_bool(payload: dict[str, Any], key: str) -> bool | None:
+    value = payload.get(key)
+    return None if value is None else bool(value)
+
+
+async def list_repos(request: web.Request) -> web.Response:
+    return web.json_response([r.as_dict() for r in request.app[REPOS].list()])
+
+
+async def add_repo(request: web.Request) -> web.Response:
+    payload = await body(request)
+    repo = await request.app[REPOS].add(
+        field(payload, "url"),
+        credential_id=payload.get("credential_id") or None,
+        category=_category(payload.get("category")),
+        ref_kind=str(payload.get("ref_kind") or "tag"),
+        pinned_ref=payload.get("pinned_ref") or None,
+        auto_update=bool(payload.get("auto_update", False)),
+    )
+    return web.json_response(repo.as_dict(), status=201)
+
+
+async def get_repo(request: web.Request) -> web.Response:
+    return web.json_response(request.app[REPOS].get(request.match_info["rid"]).as_dict())
+
+
+async def patch_repo(request: web.Request) -> web.Response:
+    payload = await body(request)
+    repo = request.app[REPOS].update_settings(
+        request.match_info["rid"],
+        credential_id=payload.get("credential_id"),
+        ref_kind=payload.get("ref_kind"),
+        pinned_ref=payload.get("pinned_ref"),
+        auto_update=_optional_bool(payload, "auto_update"),
+        category=_category(payload.get("category")),
+        clear_pin=bool(payload.get("clear_pin", False)),
+    )
+    return web.json_response(repo.as_dict())
+
+
+async def repo_refs(request: web.Request) -> web.Response:
+    refs = await request.app[REPOS].available_refs(request.match_info["rid"])
+    return web.json_response([r.as_dict() for r in refs])
+
+
+async def refresh_repo(request: web.Request) -> web.Response:
+    return web.json_response(
+        (await request.app[REPOS].refresh(request.match_info["rid"])).as_dict()
+    )
+
+
+async def install_repo(request: web.Request) -> web.Response:
+    payload = await body(request) if request.can_read_body else {}
+    store = request.app[REPOS]
+    result = await store.install(request.match_info["rid"], payload.get("ref") or None)
+    return web.json_response(
+        {
+            "files": result.files,
+            "domain": result.domain,
+            "resource_url": result.resource_url,
+            "addon_slug": result.addon_slug,
+            "repo": store.get(request.match_info["rid"]).as_dict(),
+        }
+    )
+
+
+async def uninstall_repo(request: web.Request) -> web.Response:
+    payload = await body(request) if request.can_read_body else {}
+    result = await request.app[REPOS].uninstall(
+        request.match_info["rid"], force=bool(payload.get("force", False))
+    )
+    return web.json_response(
+        {"removed": result.removed, "missing": result.missing, "modified": result.modified},
+        status=200 if result.clean else 409,
+    )
+
+
+async def delete_repo(request: web.Request) -> web.Response:
+    force = request.query.get("force") in ("1", "true", "yes")
+    result = await request.app[REPOS].delete(request.match_info["rid"], force=force)
+    return web.json_response(
+        {"deleted": result.clean, "modified": result.modified},
+        status=200 if result.clean else 409,
+    )
+
+
+async def restart_core(request: web.Request) -> web.Response:
+    await request.app[HASS].restart_core()
+    return web.json_response({"restarting": True})
+
+
 def register(app: web.Application) -> None:
     app.router.add_get("/api/vault", get_vault)
     app.router.add_post("/api/vault/passphrase", set_passphrase)
@@ -262,3 +373,15 @@ def register(app: web.Application) -> None:
 
     app.router.add_post("/api/hosts/scan", scan_host)
     app.router.add_post("/api/hosts/trust", trust_host)
+
+    app.router.add_get("/api/repos", list_repos)
+    app.router.add_post("/api/repos", add_repo)
+    app.router.add_get("/api/repos/{rid}", get_repo)
+    app.router.add_patch("/api/repos/{rid}", patch_repo)
+    app.router.add_delete("/api/repos/{rid}", delete_repo)
+    app.router.add_get("/api/repos/{rid}/refs", repo_refs)
+    app.router.add_post("/api/repos/{rid}/refresh", refresh_repo)
+    app.router.add_post("/api/repos/{rid}/install", install_repo)
+    app.router.add_post("/api/repos/{rid}/uninstall", uninstall_repo)
+
+    app.router.add_post("/api/core/restart", restart_core)

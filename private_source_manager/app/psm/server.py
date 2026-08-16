@@ -12,12 +12,16 @@ from aiohttp import web
 
 from . import __version__, api
 from .config import Settings
-from .context import CREDENTIALS, DB, GIT, SETTINGS, VAULT
+from .content import Targets
+from .context import CREDENTIALS, DB, GIT, HASS, INSTALLER, REPOS, SETTINGS, VAULT
 from .credentials import CredentialStore
 from .db import Database
 from .gitops import Git
+from .hass import HomeAssistant
 from .ingress import base_href, peer_guard
+from .installer import Installer
 from .keystore import LocalKeystore
+from .repos import RepositoryStore
 from .vault import Vault
 
 _LOGGER = logging.getLogger(__name__)
@@ -75,10 +79,20 @@ async def _lifecycle(app: web.Application) -> AsyncIterator[None]:
     db = Database(settings.db_path)
     vault = Vault(db, LocalKeystore(settings.keystore_dir))
     vault.start()
+
+    targets = Targets(ha_config_dir=settings.ha_config_dir, addons_dir=settings.addons_dir)
+    credentials = CredentialStore(db, vault)
+    git = Git(settings.cache_dir, settings.known_hosts_path)
+    hass = HomeAssistant(settings.supervisor_token)
+    installer = Installer(db, targets)
+
     app[DB] = db
     app[VAULT] = vault
-    app[CREDENTIALS] = CredentialStore(db, vault)
-    app[GIT] = Git(settings.cache_dir, settings.known_hosts_path)
+    app[CREDENTIALS] = credentials
+    app[GIT] = git
+    app[HASS] = hass
+    app[INSTALLER] = installer
+    app[REPOS] = RepositoryStore(db, credentials, git, installer, hass, targets)
 
     auto_lock: asyncio.Task[None] | None = None
     if settings.auto_lock_minutes > 0:
@@ -90,6 +104,7 @@ async def _lifecycle(app: web.Application) -> AsyncIterator[None]:
         auto_lock.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await auto_lock
+    await hass.close()
     vault.shutdown()
     db.close()
 
