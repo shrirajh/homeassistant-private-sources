@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -147,6 +148,42 @@ async def unlock(request: web.Request) -> web.Response:
 async def lock(request: web.Request) -> web.Response:
     request.app[VAULT].lock()
     return web.json_response(_status_payload(request))
+
+
+async def get_theme(request: web.Request) -> web.Response:
+    """The active Home Assistant theme, as CSS custom properties.
+
+    Ingress serves the panel in its own document, so nothing cascades in from the
+    Home Assistant frontend. The browser applies these to the root element instead.
+    """
+    hass = request.app[HASS]
+    dark = request.query.get("dark") in ("1", "true", "yes")
+    empty = {"name": None, "dark": dark, "variables": {}}
+    if not hass.available:
+        return web.json_response(empty)
+
+    try:
+        payload = await hass.themes()
+    except HomeAssistantError as err:
+        _LOGGER.debug("Could not read themes: %s", err)
+        return web.json_response(empty)
+
+    name = payload.get("default_dark_theme") if dark else payload.get("default_theme")
+    theme = (payload.get("themes") or {}).get(name)
+    if not isinstance(theme, dict):
+        # "default" is not in the themes map, so there is nothing to override with.
+        return web.json_response(empty)
+
+    # A theme may carry light and dark variants under modes.
+    modes = theme.get("modes")
+    if isinstance(modes, dict):
+        variant = modes.get("dark" if dark else "light")
+        theme = {k: v for k, v in theme.items() if k != "modes"}
+        if isinstance(variant, dict):
+            theme |= variant
+
+    variables = {k: str(v) for k, v in theme.items() if isinstance(v, str | int | float)}
+    return web.json_response({"name": name, "dark": dark, "variables": variables})
 
 
 def _tier(value: object) -> Tier:
@@ -295,16 +332,28 @@ async def get_repo(request: web.Request) -> web.Response:
 
 async def patch_repo(request: web.Request) -> web.Response:
     payload = await body(request)
-    repo = request.app[REPOS].update_settings(
+    store = request.app[REPOS]
+
+    # Absent keys must leave the field alone, while an explicit empty value clears it.
+    optional: dict[str, Any] = {}
+    for key in ("credential_id", "pinned_ref"):
+        if key in payload:
+            optional[key] = payload[key]
+
+    repo = store.update_settings(
         request.match_info["rid"],
-        credential_id=payload.get("credential_id"),
         ref_kind=payload.get("ref_kind"),
-        pinned_ref=payload.get("pinned_ref"),
         auto_update=_optional_bool(payload, "auto_update"),
         category=_category(payload.get("category")),
         clear_pin=bool(payload.get("clear_pin", False)),
+        **optional,
     )
-    return web.json_response(repo.as_dict())
+
+    # Switching channel changes what counts as available, so recompute it now rather
+    # than leaving a stale version until the next scheduled check.
+    with contextlib.suppress(GitError):
+        await store.refresh_available(repo.id)
+    return web.json_response(store.get(repo.id).as_dict())
 
 
 async def repo_refs(request: web.Request) -> web.Response:
@@ -397,5 +446,6 @@ def register(app: web.Application) -> None:
     app.router.add_post("/api/repos/{rid}/install", install_repo)
     app.router.add_post("/api/repos/{rid}/uninstall", uninstall_repo)
 
+    app.router.add_get("/api/theme", get_theme)
     app.router.add_post("/api/updates/check", check_updates)
     app.router.add_post("/api/core/restart", restart_core)

@@ -26,6 +26,10 @@ _NUMBERS = re.compile(r"\d+")
 _PRERELEASE = re.compile(r"[-+._](alpha|beta|rc|dev|pre|snapshot)", re.IGNORECASE)
 
 
+#: Distinguishes "this field was not supplied" from "set this field to nothing".
+UNSET: object = object()
+
+
 class RepositoryError(Exception):
     """Something is wrong with a repository record or its contents."""
 
@@ -77,6 +81,11 @@ def latest_tag(refs: list[Ref], *, allow_prerelease: bool = False) -> str | None
         stable = [t for t in tags if not _PRERELEASE.search(t)]
         tags = stable or tags
     return max(tags, key=version_key) if tags else None
+
+
+def branch_version(branch: str, sha: str) -> str:
+    """Identify a branch checkout by its head, so a moving branch changes version."""
+    return f"{branch}@{sha[:7]}"
 
 
 def _compare_versions(left: str, right: str) -> int:
@@ -243,7 +252,7 @@ class RepositoryStore:
                 json.dumps(manifest.__dict__, default=str),
             ),
         )
-        self._touch_available(repo_id, await self._git.local_refs(repo_id), ref_kind)
+        await self.refresh_available(repo_id)
         _LOGGER.info("Tracking %s/%s as %s", owner, name, resolved.value)
         return self.get(repo_id)
 
@@ -251,14 +260,13 @@ class RepositoryStore:
         repo = self.get(repo_id)
         try:
             await self._git.mirror(repo_id, repo.url, self._auth_for(repo.credential_id))
-            refs = await self._git.local_refs(repo_id)
+            await self.refresh_available(repo_id)
         except (GitError, RepositoryError) as err:
             self._db.execute(
                 "UPDATE repos SET last_checked = datetime('now'), last_error = ? WHERE id = ?",
                 (str(err), repo_id),
             )
             raise
-        self._touch_available(repo_id, refs, repo.ref_kind)
         return self.get(repo_id)
 
     async def available_refs(self, repo_id: str) -> list[Ref]:
@@ -327,7 +335,7 @@ class RepositoryStore:
             layout = plan(category, staging, repo.name, manifest, self._targets)
             result = self._installer.apply(repo_id, layout)
 
-        version = target if repo.ref_kind == "tag" else f"{target}@{sha[:7]}"
+        version = target if repo.ref_kind == "tag" else branch_version(target, sha)
         await self._after_install(layout.resource_url, layout.addon_slug, version)
 
         self._db.execute(
@@ -337,7 +345,7 @@ class RepositoryStore:
                 WHERE id = ?""",
             (sha, version, version, repo_id),
         )
-        self._touch_available(repo_id, await self._git.local_refs(repo_id), repo.ref_kind)
+        await self.refresh_available(repo_id)
         _LOGGER.info("Installed %s at %s", repo.slug, version)
         return result
 
@@ -371,23 +379,38 @@ class RepositoryStore:
         self,
         repo_id: str,
         *,
-        credential_id: str | None = None,
+        credential_id: str | None | object = UNSET,
         ref_kind: str | None = None,
-        pinned_ref: str | None = None,
+        pinned_ref: str | None | object = UNSET,
         auto_update: bool | None = None,
         category: Category | None = None,
         clear_pin: bool = False,
     ) -> Repo:
         repo = self.get(repo_id)
+
+        # An empty string means "no credential". Storing it would break the foreign
+        # key onto credentials, so it has to become NULL.
+        if credential_id is UNSET:
+            new_credential = repo.credential_id
+        else:
+            new_credential = str(credential_id) if credential_id else None
+
+        if clear_pin:
+            new_pin = None
+        elif pinned_ref is UNSET:
+            new_pin = repo.pinned_ref
+        else:
+            new_pin = str(pinned_ref) if pinned_ref else None
+
         self._db.execute(
             """UPDATE repos
                   SET credential_id = ?, ref_kind = ?, pinned_ref = ?, auto_update = ?,
                       category = ?, updated_at = datetime('now')
                 WHERE id = ?""",
             (
-                credential_id if credential_id is not None else repo.credential_id,
+                new_credential,
                 ref_kind or repo.ref_kind,
-                None if clear_pin else (pinned_ref if pinned_ref is not None else repo.pinned_ref),
+                new_pin,
                 int(repo.auto_update if auto_update is None else auto_update),
                 (category.value if category else repo.category),
                 repo_id,
@@ -462,11 +485,23 @@ class RepositoryStore:
         except HomeAssistantError as err:
             _LOGGER.warning("Home Assistant call failed: %s", err)
 
-    def _touch_available(self, repo_id: str, refs: list[Ref], ref_kind: str) -> None:
-        available = latest_tag(refs) if ref_kind == "tag" else None
-        if available is None:
-            row = self._db.one("SELECT installed_version FROM repos WHERE id = ?", (repo_id,))
-            available = row["installed_version"] if row else None
+    async def refresh_available(self, repo_id: str) -> None:
+        """Record what the tracked ref currently points at.
+
+        For a tag that is the newest tag. For a branch it is the branch head, so a
+        rolling release reports an update whenever the branch moves, which is the
+        whole point of tracking one.
+        """
+        repo = self.get(repo_id)
+        refs = await self._git.local_refs(repo_id)
+
+        if repo.ref_kind == "tag":
+            available = latest_tag(refs) or repo.installed_version
+        else:
+            target = repo.pinned_ref or await self._git.default_branch(repo_id)
+            head = next((r for r in refs if r.kind == "branch" and r.name == target), None)
+            available = branch_version(target, head.sha) if head else repo.installed_version
+
         self._db.execute(
             """UPDATE repos
                   SET available_version = ?, last_checked = datetime('now'), last_error = NULL

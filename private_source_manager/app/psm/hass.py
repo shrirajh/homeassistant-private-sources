@@ -69,6 +69,9 @@ class HomeAssistant:
         except HomeAssistantError as err:
             _LOGGER.debug("Could not dismiss notification: %s", err)
 
+    async def themes(self) -> dict[str, Any]:
+        return await self._command({"type": "frontend/get_themes"}) or {}
+
     async def lovelace_resources(self) -> list[dict[str, Any]]:
         return await self._command({"type": "lovelace/resources"}) or []
 

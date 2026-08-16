@@ -1,5 +1,5 @@
 name: Private Source Manager
-version: "0.1.3"
+version: "0.2.0"
 slug: private_source_manager
 description: Install and update integrations, Lovelace cards, themes and add-ons from private git repositories
 url: https://github.com/shrirajh/homeassistant-private-sources
@@ -11,6 +11,8 @@ startup: services
 boot: auto
 ingress: true
 ingress_port: 8099
+# Without this the panel exists but never reaches the sidebar.
+ingress_panel: true
 panel_icon: mdi:source-branch-check
 panel_title: Private Sources
 homeassistant_api: true

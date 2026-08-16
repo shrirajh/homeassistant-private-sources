@@ -5,6 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <base href="/">
     <title>Private Sources</title>
+    <style>
+      /* The ingress iframe has its own document. Without this reset the body
+         keeps its default margin and paints white around the panel. Canvas
+         follows color-scheme, so there is no flash before the theme loads. */
+      html {
+        color-scheme: light dark;
+        /* Canvas until the Home Assistant theme lands on the root element. */
+        background: var(--primary-background-color, Canvas);
+      }
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        min-height: 100%;
+      }
+    </style>
     <script type="module" crossorigin src="./assets/index.js"></script>
   </head>
   <body>

@@ -1,28 +1,30 @@
 import { css } from "lit";
 
-// Home Assistant's own custom properties where they exist, with standalone fallbacks
-// so the panel still looks right if ingress ever serves it outside a themed frame.
+// Home Assistant's custom properties, which the app applies to the root element at
+// startup because nothing cascades into the ingress iframe on its own. The fallbacks
+// are Home Assistant's own default light and dark values, so an unthemed install still
+// matches rather than merely looking similar.
 export const tokens = css`
   :host {
-    --psm-bg: var(--primary-background-color, #f5f5f5);
+    --psm-bg: var(--primary-background-color, #fafafa);
     --psm-card: var(--card-background-color, #ffffff);
     --psm-fg: var(--primary-text-color, #212121);
     --psm-muted: var(--secondary-text-color, #727272);
-    --psm-line: var(--divider-color, #e0e0e0);
+    --psm-line: var(--divider-color, rgba(0, 0, 0, 0.12));
     --psm-accent: var(--primary-color, #03a9f4);
     --psm-ok: var(--success-color, #43a047);
-    --psm-warn: var(--warning-color, #ffa726);
+    --psm-warn: var(--warning-color, #ffa600);
     --psm-bad: var(--error-color, #db4437);
     --psm-radius: 12px;
   }
 
   @media (prefers-color-scheme: dark) {
     :host {
-      --psm-bg: var(--primary-background-color, #111418);
-      --psm-card: var(--card-background-color, #1c1f26);
+      --psm-bg: var(--primary-background-color, #111111);
+      --psm-card: var(--card-background-color, #1c1c1c);
       --psm-fg: var(--primary-text-color, #e1e1e1);
       --psm-muted: var(--secondary-text-color, #9b9b9b);
-      --psm-line: var(--divider-color, #2c313a);
+      --psm-line: var(--divider-color, rgba(225, 225, 225, 0.12));
     }
   }
 `;

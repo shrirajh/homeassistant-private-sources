@@ -23,7 +23,7 @@ from psm.repos import (
     parse_url,
     version_key,
 )
-from psm.vault import Vault
+from psm.vault import Tier, Vault
 
 _GIT_ENV = {
     **os.environ,
@@ -194,6 +194,78 @@ async def test_branch_tracking(
     version = store.get(repo.id).installed_version
     assert version is not None
     assert version.startswith("main@")
+
+
+async def test_rolling_branch_reports_updates_as_the_branch_moves(
+    store: RepositoryStore, integration_repo: Path, targets: Targets
+) -> None:
+    """A branch that moves must register as an update, which is the point of rolling."""
+    repo = await store.add(integration_repo.as_uri(), ref_kind="branch")
+    await store.install(repo.id)
+
+    installed = store.get(repo.id)
+    assert installed.installed_version.startswith("main@")
+    assert installed.update_available is False
+
+    # A new commit on the branch, with no tag anywhere.
+    (integration_repo / "custom_components" / "demo" / "sensor.py").write_text(
+        "VERSION = 'rolling'", encoding="utf-8"
+    )
+    _git(integration_repo, "add", "-A")
+    _git(integration_repo, "commit", "-q", "-m", "move the branch")
+
+    refreshed = await store.refresh(repo.id)
+    assert refreshed.update_available is True
+    assert refreshed.available_version != installed.installed_version
+    assert refreshed.available_version.startswith("main@")
+
+    await store.install(repo.id)
+    assert store.get(repo.id).update_available is False
+    target = targets.ha_config_dir / "custom_components" / "demo" / "sensor.py"
+    assert target.read_text(encoding="utf-8") == "VERSION = 'rolling'"
+
+
+async def test_switching_to_rolling_recomputes_the_available_version(
+    store: RepositoryStore, integration_repo: Path
+) -> None:
+    repo = await store.add(integration_repo.as_uri())
+    await store.install(repo.id)
+    assert store.get(repo.id).available_version == "v1.0.0"
+
+    store.update_settings(repo.id, ref_kind="branch", clear_pin=True)
+    await store.refresh_available(repo.id)
+
+    assert store.get(repo.id).available_version.startswith("main@")
+
+
+async def test_clearing_the_credential_stores_null_not_empty_string(
+    store: RepositoryStore, integration_repo: Path
+) -> None:
+    """An empty string would violate the foreign key onto credentials."""
+    credential = store._credentials.create_token("tok", Tier.UNATTENDED, "secret-value")
+    repo = await store.add(integration_repo.as_uri(), credential_id=credential.id)
+    assert store.get(repo.id).credential_id == credential.id
+
+    store.update_settings(repo.id, credential_id="")
+
+    assert store.get(repo.id).credential_id is None
+    row = store._db.one("SELECT credential_id FROM repos WHERE id = ?", (repo.id,))
+    assert row["credential_id"] is None
+    # The credential is now unreferenced, so it must be deletable.
+    store._credentials.delete(credential.id)
+
+
+async def test_settings_left_unspecified_are_preserved(
+    store: RepositoryStore, integration_repo: Path
+) -> None:
+    repo = await store.add(integration_repo.as_uri())
+    store.update_settings(repo.id, pinned_ref="v1.0.0")
+
+    store.update_settings(repo.id, auto_update=True)
+
+    kept = store.get(repo.id)
+    assert kept.pinned_ref == "v1.0.0"
+    assert kept.auto_update is True
 
 
 async def test_delete_removes_files_and_record(

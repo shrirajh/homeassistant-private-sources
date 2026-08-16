@@ -117,8 +117,15 @@ async function request<T>(path: string, method = "GET", body?: unknown): Promise
   return payload as T;
 }
 
+export interface Theme {
+  name: string | null;
+  dark: boolean;
+  variables: Record<string, string>;
+}
+
 export const api = {
   info: () => request<Info>("api/info"),
+  theme: (dark: boolean) => request<Theme>(`api/theme?dark=${dark ? 1 : 0}`),
 
   vault: {
     status: () => request<VaultStatus>("api/vault"),

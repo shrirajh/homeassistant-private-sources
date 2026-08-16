@@ -13,6 +13,13 @@ const CATEGORIES = [
   ["addon", "Home Assistant add-on"],
 ];
 
+function describeTracking(repo: Repo): string {
+  if (repo.ref_kind === "branch") {
+    return `rolling, branch ${repo.pinned_ref ?? "default"}`;
+  }
+  return repo.pinned_ref ? `pinned to ${repo.pinned_ref}` : "newest tag";
+}
+
 @customElement("psm-repos-view")
 export class ReposView extends LitElement {
   static styles = [tokens, base];
@@ -98,15 +105,15 @@ export class ReposView extends LitElement {
               </select>
             </label>
             <label>
-              <span>Track</span>
+              <span>Release channel</span>
               <select name="ref_kind">
                 <option value="tag">newest tag</option>
-                <option value="branch">a branch</option>
+                <option value="branch">rolling, follow a branch</option>
               </select>
             </label>
             <label>
-              <span>Pin to a specific ref, optional</span>
-              <input name="pinned_ref" placeholder="v1.2.3 or main" />
+              <span>Branch or tag, optional</span>
+              <input name="pinned_ref" placeholder="leave empty for newest tag or default branch" />
             </label>
           </div>
           <label class="inline" style="margin-bottom:12px">
@@ -131,7 +138,10 @@ export class ReposView extends LitElement {
         <div class="row">
           <div class="grow">
             <h3>${repo.slug}</h3>
-            <div class="hint" style="margin:2px 0 0">${repo.host} · ${repo.category}</div>
+              <div class="hint" style="margin:2px 0 0">
+              ${repo.host} · ${repo.category}
+              ${repo.ref_kind === "branch" ? html`· <span class="pill plain">rolling</span>` : nothing}
+            </div>
           </div>
           ${repo.update_available
             ? html`<span class="pill warn">update ${repo.available_version}</span>`
@@ -168,11 +178,14 @@ export class ReposView extends LitElement {
 
   private renderDetails(repo: Repo) {
     const refs = this.refs[repo.id] ?? [];
+    const branches = refs.filter((r) => r.kind === "branch");
+    const rolling = repo.ref_kind === "branch";
+
     return html`
       <div style="margin-top:16px; border-top:1px solid var(--psm-line); padding-top:14px">
         <dl>
           <dt>URL</dt><dd class="mono">${repo.url}</dd>
-          <dt>Tracking</dt><dd>${repo.pinned_ref ? `pinned to ${repo.pinned_ref}` : `newest ${repo.ref_kind}`}</dd>
+          <dt>Tracking</dt><dd>${describeTracking(repo)}</dd>
           <dt>Installed ref</dt><dd class="mono">${repo.installed_ref?.slice(0, 12) ?? "none"}</dd>
           <dt>Last checked</dt><dd>${repo.last_checked ?? "never"}</dd>
         </dl>
@@ -189,8 +202,57 @@ export class ReposView extends LitElement {
               )}
             </select>
           </label>
+
           <label>
-            <span>Install a specific ref</span>
+            <span>Release channel</span>
+            <select
+              @change=${(e: Event) =>
+                this.patch(repo, {
+                  ref_kind: (e.target as HTMLSelectElement).value,
+                  clear_pin: true,
+                })}
+            >
+              <option value="tag" ?selected=${!rolling}>newest tag</option>
+              <option value="branch" ?selected=${rolling}>rolling, follow a branch</option>
+            </select>
+          </label>
+
+          ${rolling
+            ? html`<label>
+                <span>Branch to follow</span>
+                <select
+                  @change=${(e: Event) =>
+                    this.patch(repo, { pinned_ref: (e.target as HTMLSelectElement).value })}
+                >
+                  <option value="">default branch</option>
+                  ${branches.map(
+                    (r) => html`<option value=${r.name} ?selected=${r.name === repo.pinned_ref}>
+                      ${r.name}
+                    </option>`,
+                  )}
+                </select>
+              </label>`
+            : html`<label>
+                <span>Pin to a tag</span>
+                <select
+                  @change=${(e: Event) => {
+                    const value = (e.target as HTMLSelectElement).value;
+                    this.patch(repo, value ? { pinned_ref: value } : { clear_pin: true });
+                  }}
+                >
+                  <option value="" ?selected=${!repo.pinned_ref}>track the newest</option>
+                  ${refs
+                    .filter((r) => r.kind === "tag")
+                    .map(
+                      (r) => html`<option value=${r.name} ?selected=${r.name === repo.pinned_ref}>
+                        ${r.name}
+                      </option>`,
+                    )}
+                </select>
+              </label>`}
+
+          <label>
+            <span>Install a specific ref now</span>
             <select @change=${(e: Event) => this.install(repo, (e.target as HTMLSelectElement).value)}>
               <option value="">choose a ref…</option>
               ${refs.map((r) => html`<option value=${r.name}>${r.name} (${r.kind})</option>`)}
@@ -207,6 +269,12 @@ export class ReposView extends LitElement {
           />
           Install updates automatically
         </label>
+        ${rolling
+          ? html`<p class="hint" style="margin:4px 0 0">
+              A rolling repository updates whenever the branch moves, so the version shown is
+              the branch and its head commit.
+            </p>`
+          : nothing}
       </div>
     `;
   }

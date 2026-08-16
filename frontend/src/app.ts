@@ -148,6 +148,7 @@ export class App extends LitElement {
   }
 
   private async bootstrap() {
+    void this.applyTheme();
     try {
       const [info, status] = await Promise.all([api.info(), api.vault.status()]);
       this.info = info;
@@ -155,6 +156,24 @@ export class App extends LitElement {
       await this.loadCredentials();
     } catch (err) {
       this.fatal = err instanceof ApiError ? err.message : String(err);
+    }
+  }
+
+  /**
+   * Ingress serves this panel in its own document, so Home Assistant's theme does not
+   * cascade in. Fetch the active theme and set it on the root element instead: custom
+   * properties inherit through shadow DOM, so every component picks it up unchanged.
+   */
+  private async applyTheme() {
+    const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    try {
+      const theme = await api.theme(dark);
+      const root = document.documentElement;
+      for (const [name, value] of Object.entries(theme.variables)) {
+        root.style.setProperty(`--${name}`, value);
+      }
+    } catch {
+      /* the built in palette already matches Home Assistant's defaults */
     }
   }
 

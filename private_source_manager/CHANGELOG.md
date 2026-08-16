@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.0
+
+- Show the panel in the sidebar. `ingress_panel` was missing, so the panel existed but
+  could only be reached through the add-on page.
+- Follow the active Home Assistant theme. Ingress serves the panel in its own document, so
+  nothing cascades in from the frontend; the theme is now fetched and applied to the root
+  element, where custom properties inherit through shadow DOM. The built in palette also
+  matches Home Assistant's own default light and dark values rather than approximating them.
+- Remove the white border around the panel, caused by the iframe document keeping its
+  default body margin with no background.
+- Rolling releases actually roll. A repository tracking a branch reported its installed
+  version as the available one, so `update_available` was permanently false and a moving
+  branch never registered. The branch head is now the available version, and the channel
+  can be switched between newest tag and a chosen branch after adding, with a branch picker.
+- Clearing a repository's credential stores NULL rather than an empty string, which would
+  have violated the foreign key onto credentials.
+
 ## 0.1.3
 
 - Grant `k` on every writable path in the AppArmor profile. SQLite takes an fcntl advisory
