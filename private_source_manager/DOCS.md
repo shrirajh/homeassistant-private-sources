@@ -137,5 +137,12 @@ integration, and reloading the add-on store after cloning a private add-on. It a
 Home Assistant configuration directory and `/addons` read-write, because that is where the
 content it installs has to go.
 
-An AppArmor profile ships with the add-on. If the add-on fails to start on your system, set
-`apparmor: false` in the add-on configuration to rule it out and please open an issue.
+An AppArmor profile ships with the add-on. It reads broadly but writes only to `/data`, the
+Home Assistant configuration directory, `/addons`, `/tmp` and `/run`, and denies writes to
+the container's own account and ssh configuration.
+
+Because AppArmor matches the resolved path rather than the symlink, every entry point the
+add-on executes is checked against the profile in CI, resolved through its symlinks. If the
+add-on ever fails to start with `unable to exec ... Permission denied`, set
+`apparmor: false` in the add-on configuration to confirm the profile is the cause and please
+open an issue.

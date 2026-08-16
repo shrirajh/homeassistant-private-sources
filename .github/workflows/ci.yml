@@ -24,6 +24,11 @@ jobs:
       - run: uv run pytest -q
       - name: Validate the add-on manifest
         run: uv run python tools/check_addon.py
+      - name: Validate the AppArmor profile
+        run: |
+          sudo apt-get install -y -qq apparmor >/dev/null
+          apparmor_parser --skip-kernel-load private_source_manager/apparmor.txt
+          uv run python tools/check_apparmor.py
 
   frontend:
     runs-on: ubuntu-latest

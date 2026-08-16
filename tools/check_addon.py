@@ -95,6 +95,16 @@ def check_changelog(config: dict[str, Any]) -> None:
         fail(f"CHANGELOG.md top entry {headings[0]!r} does not match version {version!r}")
 
 
+def check_version_sync(config: dict[str, Any]) -> None:
+    """config.yaml drives the Supervisor, __init__ drives the log line and /api/info."""
+    init = ADDON / "app/psm/__init__.py"
+    match = re.search(r'__version__\s*=\s*"([^"]+)"', init.read_text(encoding="utf-8"))
+    if match is None:
+        fail("psm/__init__.py has no __version__")
+    elif match.group(1) != config.get("version"):
+        fail(f"psm/__init__.py is {match.group(1)!r} but config.yaml is {config.get('version')!r}")
+
+
 def check_files() -> None:
     for name in ("Dockerfile", "README.md", "DOCS.md", "requirements.txt", "apparmor.txt"):
         if not (ADDON / name).is_file():
@@ -157,6 +167,7 @@ def main() -> int:
         check_config(config, build)
         check_options(config)
         check_changelog(config)
+        check_version_sync(config)
     check_files()
     check_images()
     check_repository()

@@ -77,6 +77,29 @@ script is free of CRLF, `static/index.html` still carries its literal base href,
 
 This replaces `home-assistant/actions/hassio-addon-lint`, which no longer exists.
 
+## AppArmor profile
+
+AppArmor enforces on the **resolved** path, so a rule matching a symlink grants nothing.
+`/usr/bin/bashio` is a symlink to `/usr/lib/bashio/bashio`, and missing that cost one broken
+release.
+
+```bash
+apparmor_parser --skip-kernel-load private_source_manager/apparmor.txt   # syntax
+uv run python tools/check_apparmor.py                                    # coverage
+```
+
+The coverage check compares the profile's execute rules against
+`tools/apparmor_exec_targets.json`, which records what each entry point resolves to. Refresh
+it whenever the base image changes:
+
+```bash
+uv run python tools/check_apparmor.py --from-image psm-test:local
+```
+
+Enforcement itself cannot be tested here: the WSL2 kernel Docker Desktop runs has no
+AppArmor, so `docker run --security-opt apparmor=...` is a no-op. Syntax and coverage are
+checked instead, and the profile only truly runs on Home Assistant OS.
+
 ## Icon and logo
 
 Generated rather than hand drawn, so the design lives in code:

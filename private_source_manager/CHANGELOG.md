@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.1
+
+- Grant execute on `/usr/lib/bashio/**` in the AppArmor profile. `/usr/bin/bashio` is a
+  symlink and AppArmor matches the resolved path, so the add-on could not start.
+- Grant execute on `/opt/psm/psm/bin/**`, without which git could not run the askpass
+  helper and token authentication would have failed.
+- `tools/check_apparmor.py` resolves every entry point in a built image and fails if the
+  profile does not cover it, so this class of gap cannot ship again.
+
 ## 0.1.0
 
 First release.

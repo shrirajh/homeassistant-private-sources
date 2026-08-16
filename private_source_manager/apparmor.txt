@@ -8,7 +8,8 @@ profile private_source_manager flags=(attach_disconnected,mediate_deleted) {
   signal (send) set=(kill,term,int,hup,cont),
   ptrace (trace,read) peer=@{profile_name},
 
-  # s6-overlay, bashio, git, ssh and python all live under the standard bin paths.
+  # AppArmor matches on the resolved path, so every symlinked entry point needs a
+  # rule covering its target, not the link. tools/check_apparmor.py enforces this.
   /init ix,
   /bin/** ix,
   /usr/bin/** ix,
@@ -18,6 +19,13 @@ profile private_source_manager flags=(attach_disconnected,mediate_deleted) {
   /package/** ix,
   /run/{s6,s6-rc*,service}/** ix,
   /etc/s6-overlay/** rix,
+
+  # /usr/bin/bashio is a symlink to /usr/lib/bashio/bashio, and bashio sources the
+  # rest of the directory, so it needs read as well as execute.
+  /usr/lib/bashio/** rix,
+
+  # The askpass helper git runs to collect a token.
+  /opt/psm/psm/bin/** rix,
 
   # Read broadly, write only where the add-on legitimately needs to.
   /** r,
