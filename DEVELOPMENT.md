@@ -64,6 +64,19 @@ CI rebuilds the bundle and fails if the committed copy is stale.
 `index.html` must keep the literal `<base href="/">` tag. The server rewrites it per request
 from `X-Ingress-Path`, which is how relative URLs resolve inside the ingress iframe.
 
+## Add-on manifest checks
+
+```bash
+uv run python tools/check_addon.py
+```
+
+Verifies `config.yaml` against `build.yaml`, `CHANGELOG.md` and the shipped files:
+architectures agree, options all have schema entries, requirements are pinned, the s6 run
+script is free of CRLF, `static/index.html` still carries its literal base href, and
+`repository.yaml` does not leak a personal email address.
+
+This replaces `home-assistant/actions/hassio-addon-lint`, which no longer exists.
+
 ## Icon and logo
 
 Generated rather than hand drawn, so the design lives in code:

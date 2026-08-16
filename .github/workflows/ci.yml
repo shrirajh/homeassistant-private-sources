@@ -22,6 +22,8 @@ jobs:
       - run: uv run ruff check .
       - run: uv run ruff format --check .
       - run: uv run pytest -q
+      - name: Validate the add-on manifest
+        run: uv run python tools/check_addon.py
 
   frontend:
     runs-on: ubuntu-latest
@@ -48,13 +50,3 @@ jobs:
             git diff --stat -- private_source_manager/app/psm/static
             exit 1
           fi
-
-  addon:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Validate the add-on
-        # home-assistant/actions publishes no releases, so this is the master head.
-        uses: home-assistant/actions/hassio-addon-lint@a7c616ce81ccda50150bf1595786c71b1883fabb
-        with:
-          path: ./private_source_manager
