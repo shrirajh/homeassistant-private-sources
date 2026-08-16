@@ -84,8 +84,9 @@ AppArmor enforces on the **resolved** path, so a rule matching a symlink grants 
 release.
 
 ```bash
-apparmor_parser --skip-kernel-load private_source_manager/apparmor.txt   # syntax
-uv run python tools/check_apparmor.py                                    # coverage
+sudo apparmor_parser --skip-kernel-load --skip-cache \
+  private_source_manager/apparmor.txt      # syntax
+uv run python tools/check_apparmor.py      # coverage
 ```
 
 The coverage check compares the profile's execute rules against

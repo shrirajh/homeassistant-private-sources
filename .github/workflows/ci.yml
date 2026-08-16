@@ -27,7 +27,11 @@ jobs:
       - name: Validate the AppArmor profile
         run: |
           sudo apt-get install -y -qq apparmor >/dev/null
-          apparmor_parser --skip-kernel-load private_source_manager/apparmor.txt
+          # The runner kernel has AppArmor, so the parser reaches for its policy
+          # cache in /var/cache/apparmor. Skip the cache and run privileged so
+          # neither the cache nor the kernel is touched.
+          sudo apparmor_parser --skip-kernel-load --skip-cache \
+            private_source_manager/apparmor.txt
           uv run python tools/check_apparmor.py
 
   frontend:
