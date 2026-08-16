@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <base href="/">
+    <title>Private Sources</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fafafa;
+        --card: #ffffff;
+        --fg: #212121;
+        --muted: #727272;
+        --line: #e0e0e0;
+        --accent: #03a9f4;
+        --ok: #4caf50;
+        --bad: #f44336;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #111418;
+          --card: #1c1f26;
+          --fg: #e1e1e1;
+          --muted: #9b9b9b;
+          --line: #2c313a;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 24px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      .card {
+        max-width: 640px;
+        margin: 0 auto;
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 24px;
+      }
+      h1 { margin: 0 0 4px; font-size: 20px; font-weight: 600; }
+      p.sub { margin: 0 0 20px; color: var(--muted); }
+      dl { display: grid; grid-template-columns: 160px 1fr; gap: 8px 16px; margin: 0; }
+      dt { color: var(--muted); }
+      dd { margin: 0; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; word-break: break-all; }
+      .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+      .pill.ok { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+      .pill.bad { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
+      footer { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Private Sources</h1>
+      <p class="sub">Skeleton build. Repository management arrives in a later phase.</p>
+      <dl>
+        <dt>API</dt><dd id="api"><span class="pill">checking…</span></dd>
+        <dt>Version</dt><dd id="version">-</dd>
+        <dt>Ingress base</dt><dd id="base">-</dd>
+        <dt>Supervisor token</dt><dd id="sup">-</dd>
+      </dl>
+      <footer>If every row above resolves, ingress routing and the Supervisor handshake are working.</footer>
+    </div>
+    <script type="module">
+      const set = (id, html) => { document.getElementById(id).innerHTML = html; };
+      try {
+        const res = await fetch("api/info", { headers: { accept: "application/json" } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const info = await res.json();
+        set("api", '<span class="pill ok">reachable</span>');
+        set("version", info.version);
+        set("base", info.ingress_base);
+        set("sup", info.supervisor
+          ? '<span class="pill ok">present</span>'
+          : '<span class="pill bad">missing</span>');
+      } catch (err) {
+        set("api", `<span class="pill bad">${err.message}</span>`);
+      }
+    </script>
+  </body>
+</html>

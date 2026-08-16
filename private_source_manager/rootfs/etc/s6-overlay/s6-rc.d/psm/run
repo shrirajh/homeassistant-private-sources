@@ -1,0 +1,10 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+
+# Options are read from /data/options.json by the application itself, so this script
+# deliberately avoids bashio::config and its Supervisor round trip at boot.
+
+bashio::log.info "Starting Private Source Manager"
+
+cd /opt/psm || bashio::exit.nok "Application directory is missing"
+exec python3 -m psm
