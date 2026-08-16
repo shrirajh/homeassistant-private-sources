@@ -47,6 +47,31 @@ compiles from source on the Home Assistant Green, which is slow at best and fail
 This is why the architecture list is `aarch64` and `amd64` only: `cryptography` publishes no
 musllinux wheel for armv7.
 
+## Frontend
+
+The panel is a Lit app under `frontend/`. Its build output is **committed** to
+`private_source_manager/app/psm/static/` so the Supervisor never needs Node on the device.
+
+```bash
+cd frontend
+npm install
+npm run build      # writes into the add-on, commit the result
+npm run typecheck
+```
+
+CI rebuilds the bundle and fails if the committed copy is stale.
+
+`index.html` must keep the literal `<base href="/">` tag. The server rewrites it per request
+from `X-Ingress-Path`, which is how relative URLs resolve inside the ingress iframe.
+
+## Icon and logo
+
+Generated rather than hand drawn, so the design lives in code:
+
+```bash
+uv run python tools/make_icons.py
+```
+
 ## Building the image locally
 
 The Supervisor supplies `BUILD_FROM` from `build.yaml`. To reproduce a build on an amd64

@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      - run: npx tsc --noEmit
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+      # The bundle is committed so the Supervisor never needs Node on the device.
+      # This fails if someone changed the source without rebuilding.
+      - name: Committed bundle matches source
+        run: |
+          if ! git diff --quiet -- private_source_manager/app/psm/static; then
+            echo "The committed frontend bundle is stale. Run 'npm run build' in frontend/ and commit the result."
+            git diff --stat -- private_source_manager/app/psm/static
+            exit 1
+          fi
+
+  addon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate the add-on
+        uses: home-assistant/actions/hassio-addon-lint@master
+        with:
+          path: ./private_source_manager

@@ -2,6 +2,9 @@
 **/*.py[cod]
 **/.pytest_cache/
 **/.ruff_cache/
+README.md
 DOCS.md
 CHANGELOG.md
-README.md
+apparmor.txt
+icon.png
+logo.png

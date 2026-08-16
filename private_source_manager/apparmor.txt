@@ -1,0 +1,38 @@
+#include <tunables/global>
+
+profile private_source_manager flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  network,
+  capability,
+  signal (send) set=(kill,term,int,hup,cont),
+  ptrace (trace,read) peer=@{profile_name},
+
+  # s6-overlay, bashio, git, ssh and python all live under the standard bin paths.
+  /init ix,
+  /bin/** ix,
+  /usr/bin/** ix,
+  /usr/local/bin/** ix,
+  /usr/libexec/** ix,
+  /command/** ix,
+  /package/** ix,
+  /run/{s6,s6-rc*,service}/** ix,
+  /etc/s6-overlay/** rix,
+
+  # Read broadly, write only where the add-on legitimately needs to.
+  /** r,
+  /data/** rw,
+  /homeassistant/** rw,
+  /addons/** rw,
+  /tmp/** rw,
+  /run/** rwk,
+  /var/** rw,
+  /dev/** rw,
+  /opt/psm/** r,
+
+  # Nothing here should ever rewrite the container's own configuration.
+  deny /etc/passwd w,
+  deny /etc/shadow rw,
+  deny /etc/ssh/** w,
+  deny /root/** w,
+}
